@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RIZZ-X | Remote Support</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#151d32;--line:#2b3858;--text:#edf2ff;--muted:#9eaccb;--accent:#67e8c2}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#1b2b4a,var(--bg) 55%);font:15px system-ui;color:var(--text);min-height:100vh}
+main{max-width:1050px;margin:auto;padding:28px 18px}.brand{display:flex;align-items:center;gap:12px}.logo{width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,#67e8c2,#5b8cff);display:grid;place-items:center;color:#07101e;font-weight:900;font-size:22px}
+h1{margin:0;font-size:28px;letter-spacing:2px}.sub{color:var(--muted);margin:4px 0 24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.card{background:#151d32eF;border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 18px 45px #0003}
+h2{font-size:18px;margin:0 0 12px}.muted{color:var(--muted);line-height:1.5}.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+button,input{border-radius:10px;border:1px solid var(--line);padding:12px 14px;font:inherit}button{background:var(--accent);color:#07101e;font-weight:750;cursor:pointer}button.secondary{background:#263553;color:var(--text)}button:disabled{opacity:.45;cursor:not-allowed}input{background:#0c1427;color:var(--text);min-width:0;flex:1}
+.pin{font-size:34px;font-weight:850;letter-spacing:7px;margin:12px 0;color:var(--accent)}.status{padding:9px 12px;background:#0c1427;border:1px solid var(--line);border-radius:10px;color:var(--muted);margin-top:12px}
+video{width:100%;background:#050810;border-radius:12px;min-height:180px;max-height:65vh;object-fit:contain;margin-top:14px}
+.notice{border-left:3px solid var(--accent);padding:10px 13px;background:#102638;border-radius:8px;margin-top:16px;color:#cfeee8;font-size:13px}
+.hidden{display:none}.footer{color:var(--muted);font-size:12px;margin-top:22px}
+</style>
+</head>
+<body><main>
+<div class="brand"><div class="logo">R</div><div><h1>RIZZ-X</h1><div class="muted">CONSENT-BASED REMOTE SUPPORT</div></div></div>
+<p class="sub">Secure, temporary screen-sharing sessions. The host decides when to share and can stop at any time.</p>
+<div class="grid">
+<section class="card">
+<h2>Host this device</h2>
+<p class="muted">Create a temporary support session. Share the PIN with the person you trust. Your screen is not shared until you explicitly press Start sharing and choose a screen/window.</p>
+<button id="create">Create support PIN</button>
+<div id="pinArea" class="hidden"><div class="pin" id="pin">------</div><div class="muted">PIN expires in 10 minutes and can be used once.</div>
+<div class="row"><button id="hostConnect" class="secondary">Connect host</button><button id="share" disabled>Start screen sharing</button><button id="stop" class="secondary" disabled>Stop sharing</button></div></div>
+<div id="hostStatus" class="status">Not connected</div>
+</section>
+<section class="card">
+<h2>Join a session</h2>
+<p class="muted">Enter the six-digit PIN provided by the host. Joining does not grant control of the host device.</p>
+<div class="row"><input id="joinPin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN"><button id="join">Join</button></div>
+<div id="viewerStatus" class="status">Not connected</div>
+<video id="remoteVideo" autoplay playsinline controls class="hidden"></video>
+</section>
+</div>
+<div class="notice"><b>Safety:</b> RIZZ-X provides screen viewing only. It does not include remote keyboard/mouse control, hidden access, arbitrary command execution, or unattended access. Only connect to devices with explicit permission.</div>
+<div class="footer">RIZZ-X • Sessions are temporary and stored only in server memory. For internet access, use a private VPN and HTTPS; never expose this server directly to the public internet.</div>
+</main>
+<script>
+let pin=null, ws=null, pc=null, localStream=null, role=null;
+const $=id=>document.getElementById(id);
+const set=(id,msg)=>$(id).textContent=msg;
+const cfg={iceServers:[{urls:"stun:stun.l.google.com:19302"}]};
+function socketUrl(p,r){const proto=location.protocol==="https:"?"wss":"ws";return `${proto}://${location.host}/ws/${p}/${r}`;}
+function newPeer(){
+  pc=new RTCPeerConnection(cfg);
+  pc.onicecandidate=e=>{if(e.candidate&&ws?.readyState===1)ws.send(JSON.stringify({type:"ice",data:e.candidate}));};
+  pc.ontrack=e=>{ $("remoteVideo").srcObject=e.streams[0]; $("remoteVideo").classList.remove("hidden"); set("viewerStatus","Receiving shared screen.");};
+  pc.onconnectionstatechange=()=>{if(pc) set(role==="host"?"hostStatus":"viewerStatus","Peer connection: "+pc.connectionState);};
+}
+function connect(p,r){
+  role=r; ws=new WebSocket(socketUrl(p,r));
+  ws.onopen=()=>set(r==="host"?"hostStatus":"viewerStatus","Connected to RIZZ-X signaling. Waiting for the other device…");
+  ws.onmessage=async ev=>{
+    const m=JSON.parse(ev.data);
+    if(m.type==="error"){set(r==="host"?"hostStatus":"viewerStatus",m.message);return;}
+    if(m.type==="ready"){newPeer();if(r==="host")$("share").disabled=false;return;}
+    if(m.type==="offer"&&r==="viewer"){
+      await pc.setRemoteDescription(m.data);const answer=await pc.createAnswer();await pc.setLocalDescription(answer);ws.send(JSON.stringify({type:"answer",data:pc.localDescription}));
+    }else if(m.type==="answer"&&r==="host"){await pc.setRemoteDescription(m.data);}
+    else if(m.type==="ice"&&m.data){try{await pc.addIceCandidate(m.data);}catch(e){console.warn(e);}}
+    else if(m.type==="stop"||m.type==="peer_left"){if($("remoteVideo").srcObject){$("remoteVideo").srcObject.getTracks().forEach(t=>t.stop());$("remoteVideo").srcObject=null;}set(r==="host"?"hostStatus":"viewerStatus","Screen sharing stopped or peer disconnected.");}
+  };
+  ws.onclose=()=>set(r==="host"?"hostStatus":"viewerStatus","Connection closed.");
+}
+$("create").onclick=async()=>{
+  try{const res=await fetch("/api/create",{method:"POST"});const data=await res.json();if(!res.ok)throw Error(data.error||"Could not create PIN");pin=data.pin;$("pin").textContent=pin;$("pinArea").classList.remove("hidden");set("hostStatus","PIN created. Connect this device, then ask the viewer to join.");}
+  catch(e){set("hostStatus",e.message);}
+};
+$("hostConnect").onclick=()=>{if(pin)connect(pin,"host");};
+$("join").onclick=()=>{const p=$("joinPin").value.trim();if(!/^\d{6}$/.test(p)){set("viewerStatus","Enter a valid six-digit PIN.");return;}connect(p,"viewer");};
+$("share").onclick=async()=>{
+  if(role!=="host"||!pc||!ws||ws.readyState!==1)return;
+  try{
+    localStream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:15},audio:false});
+    localStream.getTracks().forEach(t=>t.onended=()=>stopShare());
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+    const offer=await pc.createOffer();await pc.setLocalDescription(offer);ws.send(JSON.stringify({type:"offer",data:pc.localDescription}));
+    $("share").disabled=true;$("stop").disabled=false;set("hostStatus","Screen sharing is active. You can stop at any time.");
+  }catch(e){set("hostStatus","Screen sharing was cancelled or unavailable: "+e.message);}
+};
+function stopShare(){
+  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}
+  if(ws?.readyState===1)ws.send(JSON.stringify({type:"stop"}));
+  $("stop").disabled=true;$("share").disabled=!(ws?.readyState===1);set("hostStatus","Screen sharing stopped.");
+}
+$("stop").onclick=stopShare;
+</script>
+</body></html>
